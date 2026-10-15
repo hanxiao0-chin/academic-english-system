@@ -1,0 +1,5 @@
+.streamlit/secrets.toml
+__pycache__/
+*.py[cod]
+sentences.db
+*.db

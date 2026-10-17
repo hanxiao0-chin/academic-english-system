@@ -3,6 +3,11 @@ import pandas as pd
 from datetime import date
 import html
 import random
+import time
+
+SCRIPT_START = time.perf_counter()
+
+
 
 from database import (
     get_connection,
@@ -24,9 +29,21 @@ from database import (
 
 st.set_page_config(
     page_title="Academic English Sentence Bank",
-    page_icon="📚",
+    page_icon="🌸",
     layout="wide"
 )
+
+
+
+# ============================================================
+# LOAD CUSTOM CSS
+# ============================================================
+with open("style.css", "r", encoding="utf-8") as css_file:
+    st.markdown(
+        f"<style>{css_file.read()}</style>",
+        unsafe_allow_html=True
+    )
+
 
 
 # ============================================================
@@ -41,6 +58,9 @@ if "selected_sentence_id" not in st.session_state:
 
 if "recommend_seed" not in st.session_state:
     st.session_state["recommend_seed"] = 0
+
+if "quick_review_seed" not in st.session_state:
+    st.session_state["quick_review_seed"] = 0
 
 if "confirm_delete" not in st.session_state:
     st.session_state["confirm_delete"] = False
@@ -61,38 +81,35 @@ def go_to_page(page, sentence_id=None):
     st.rerun()
 
 
+
+@st.cache_data(ttl=300, show_spinner=False)
 def get_all_tags():
 
     conn = get_connection()
-    cursor = conn.cursor()
 
-    cursor.execute(
-        "SELECT name FROM functions ORDER BY id"
-    )
-    functions = [
-        row[0]
-        for row in cursor.fetchall()
-    ]
+    try:
+        with conn.cursor() as cursor:
 
-    cursor.execute(
-        "SELECT name FROM sections ORDER BY id"
-    )
-    sections = [
-        row[0]
-        for row in cursor.fetchall()
-    ]
+            cursor.execute(
+                "SELECT name FROM functions ORDER BY id"
+            )
+            functions = [row[0] for row in cursor.fetchall()]
 
-    cursor.execute(
-        "SELECT name FROM domains ORDER BY name"
-    )
-    domains = [
-        row[0]
-        for row in cursor.fetchall()
-    ]
+            cursor.execute(
+                "SELECT name FROM sections ORDER BY id"
+            )
+            sections = [row[0] for row in cursor.fetchall()]
 
-    conn.close()
+            cursor.execute(
+                "SELECT name FROM domains ORDER BY name"
+            )
+            domains = [row[0] for row in cursor.fetchall()]
+
+    finally:
+        conn.close()
 
     return functions, sections, domains
+
 
 
 def get_sentence_tags(sentence_id):
@@ -371,6 +388,14 @@ def delete_sentences(sentence_ids):
 
         cursor.execute(
             """
+            DELETE FROM learning_records
+            WHERE sentence_id = %s
+            """,
+            (sentence_id,)
+        )
+
+        cursor.execute(
+            """
             DELETE FROM sentences
             WHERE id = %s
             """,
@@ -409,6 +434,206 @@ def get_sentence(sentence_id):
     return row
 
 
+def ensure_learning_records_table():
+    """Create a separate history table for genuine review sessions."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS learning_records (
+                    id BIGSERIAL PRIMARY KEY,
+                    sentence_id BIGINT NOT NULL,
+                    reviewed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    remember_count INTEGER NOT NULL DEFAULT 0,
+                    use_count INTEGER NOT NULL DEFAULT 0,
+                    mastery_level TEXT NOT NULL DEFAULT 'Learning',
+                    practice_text TEXT
+                )
+            """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_learning_dashboard_data():
+    """Return the three learning-progress metrics shown on Browse."""
+    conn = get_connection()
+
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT COUNT(*)
+                FROM learning_records
+            """)
+            total_reviews = cursor.fetchone()[0]
+
+            cursor.execute("""
+                SELECT COUNT(*)
+                FROM learning_records
+                WHERE reviewed_at >= CURRENT_DATE
+                  AND reviewed_at < CURRENT_DATE + INTERVAL '1 day'
+            """)
+            today_reviews = cursor.fetchone()[0]
+
+            cursor.execute("""
+                SELECT COUNT(DISTINCT sentence_id)
+                FROM learning_records
+            """)
+            reviewed_sentences = cursor.fetchone()[0]
+
+            cursor.execute("""
+                SELECT COUNT(*)
+                FROM (
+                    SELECT DISTINCT ON (sentence_id)
+                        sentence_id, mastery_level
+                    FROM learning_records
+                    ORDER BY sentence_id, reviewed_at DESC, id DESC
+                ) latest
+                WHERE mastery_level = 'Mastered'
+            """)
+            mastered_sentences = cursor.fetchone()[0]
+
+        return total_reviews, reviewed_sentences, mastered_sentences, [], [], today_reviews
+
+    finally:
+        conn.close()
+
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_keyword_phrases():
+    """Read existing keyword/pattern phrases from the sentence bank."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT keywords
+                FROM sentences
+                WHERE keywords IS NOT NULL
+                  AND TRIM(keywords) <> ''
+            """)
+            rows = cursor.fetchall()
+        phrases = []
+        for row in rows:
+            for item in (row[0] or "").replace("\\n", ";").split(";"):
+                item = item.strip()
+                if item and item.lower() != "nan":
+                    phrases.append(item)
+        return list(dict.fromkeys(phrases))
+    finally:
+        conn.close()
+
+
+def get_sentences_by_keyword_phrase(selected_phrase):
+    """Return sentences whose keyword field contains the exact phrase."""
+    conn = get_connection()
+
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT id, sentence, source, keywords
+                FROM sentences
+                WHERE keywords IS NOT NULL
+                  AND TRIM(keywords) <> ''
+                ORDER BY id DESC
+            """)
+            rows = cursor.fetchall()
+    finally:
+        conn.close()
+
+    matched_rows = []
+
+    for row in rows:
+        keywords_text = row[3] or ""
+
+        # Support semicolons and actual line breaks.
+        phrases_in_sentence = [
+            item.strip()
+            for item in keywords_text.replace("\\n", "\n").split(";")
+            for item in item.splitlines()
+            if item.strip()
+        ]
+
+        if any(
+            phrase.casefold() == selected_phrase.casefold()
+            for phrase in phrases_in_sentence
+        ):
+            matched_rows.append(row)
+
+    return matched_rows
+
+
+def render_keyword_cloud(phrases):
+    """Display clickable keyword phrases in a soft pink grid."""
+    if not phrases:
+        st.caption("No keywords or patterns found yet.")
+        return
+
+    rng = random.Random(
+        st.session_state["quick_review_seed"]
+    )
+    shown = rng.sample(phrases, min(40, len(phrases)))
+    rng.shuffle(shown)
+
+    st.caption("Select a phrase to find its source sentences.")
+
+    pink_colors = [
+        "#FFF0F3",
+        "#FCE7EF",
+        "#F9EAF2",
+        "#FDF1F5",
+    ]
+
+    st.markdown(
+        """
+        <style>
+        div[class*="st-key-quick_phrase_"] button {
+            color: #76515F !important;
+            border: 1px solid #F0D5E0 !important;
+            transition: background-color 0.2s ease;
+        }
+        div[class*="st-key-quick_phrase_"] button:hover {
+            border-color: #DDA7BC !important;
+            color: #76515F !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    columns = st.columns(4)
+
+    for index, phrase in enumerate(shown):
+        with columns[index % 4]:
+            color = pink_colors[index % len(pink_colors)]
+
+            st.markdown(
+                f"""
+                <style>
+                div.st-key-quick_phrase_{index}_{hash(phrase)} button {{
+                    background-color: {color} !important;
+                }}
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            if st.button(
+                phrase,
+                key=f"quick_phrase_{index}_{hash(phrase)}",
+                use_container_width=True,
+                help=f"Find sentences containing: {phrase}"
+            ):
+                st.session_state["selected_keyword_phrase"] = phrase
+                st.rerun()
+
+
+
+
+
+
 # ============================================================
 # TAGS
 # ============================================================
@@ -420,7 +645,7 @@ all_functions, all_sections, all_domains = get_all_tags()
 # GLOBAL HEADER
 # ============================================================
 
-st.title("📚 Academic English Sentence Bank")
+st.title("Academic English Sentence Bank")
 
 st.caption(
     "A personal database for collecting, organising, "
@@ -439,26 +664,50 @@ nav1, nav2, nav3 = st.columns(3)
 
 with nav1:
     if st.button(
-        "➕ Import",
-        use_container_width=True
+        "Import",
+        width="stretch"
     ):
         go_to_page("add")
 
 with nav2:
     if st.button(
-        "🔍 Browse",
-        use_container_width=True
+        "Browse",
+        width="stretch"
     ):
         go_to_page("browse")
 
 with nav3:
     if st.button(
-        "🎯 Recommend",
-        use_container_width=True
+        "Recommend",
+        width="stretch"
     ):
         go_to_page("recommend")
 
 st.divider()
+
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_recommendation_rows():
+    conn = get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    sentence,
+                    source,
+                    keywords,
+                    remember_count,
+                    use_count
+                FROM sentences
+                """
+            )
+            return cursor.fetchall()
+    finally:
+        conn.close()
+
 
 
 # ============================================================
@@ -631,7 +880,7 @@ RETURNING id
 
                 st.dataframe(
                     import_df,
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
 
@@ -852,6 +1101,9 @@ ON CONFLICT DO NOTHING
 
                     conn.commit()
                     conn.close()
+                    # Refresh cached tags and keywords after importing
+                    get_all_tags.clear()
+                    get_keyword_phrases.clear()
 
                     st.session_state.import_success_count = imported_count
                     st.rerun()
@@ -863,14 +1115,130 @@ ON CONFLICT DO NOTHING
             )
 
 
-
 # ============================================================
 # PAGE 2 — BROWSE
 # ============================================================
 
 elif current_page == "browse":
 
-    st.header("🔍 Browse Sentence Bank")
+
+    # Learning progress dashboard
+    try:
+        total_reviews, reviewed_sentences, mastered_sentences, recent_records, _, today_reviews = get_learning_dashboard_data()
+
+        with st.expander("Learning Progress", expanded=True):
+            progress_col1, progress_col2, progress_col3 = st.columns(3)
+            progress_col1.metric("Review sessions", total_reviews)
+            progress_col2.metric("Sentences reviewed", reviewed_sentences)
+            progress_col3.metric("Currently mastered", mastered_sentences)
+            
+            daily_goal = 10
+            daily_progress = min(today_reviews / daily_goal, 1.0)
+
+            st.markdown(
+                f"""
+                <div class="daily-progress-card">
+                    <div class="daily-progress-heading">
+                        <span>🌸 Today's Review</span>
+                        <span>{today_reviews} / {daily_goal}</span>
+                    </div>
+                    <div class="daily-progress-track">
+                        <div class="daily-progress-fill"
+                             style="width: {daily_progress * 100}%;">
+                        </div>
+                    </div>
+                    <div class="daily-progress-caption">
+                        {daily_progress * 100:.0f}% completed ·
+                        Keep growing, one sentence at a time.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+
+    except Exception as e:
+        st.warning(f"Learning progress could not be loaded: {e}")
+
+        # Quick Review: clickable keyword phrases and related sentences
+    with st.expander("Quick Review", expanded=True):
+
+        refresh_col, _ = st.columns([1, 8])
+
+        with refresh_col:
+            if st.button("Refresh", key="refresh_quick_review"):
+                st.session_state["quick_review_seed"] += 1
+                st.rerun()
+
+        try:
+            render_keyword_cloud(get_keyword_phrases())
+        except Exception as e:
+            st.warning(f"Quick Review could not be loaded: {e}")
+
+        # Display sentences associated with the selected phrase
+        selected_phrase = st.session_state.get(
+            "selected_keyword_phrase"
+        )
+
+        if selected_phrase:
+            st.divider()
+
+            header_col, clear_col = st.columns([5, 1])
+
+            with header_col:
+                st.subheader(f"{selected_phrase}")
+
+            with clear_col:
+                if st.button(
+                    "Clear",
+                    key="clear_selected_keyword"
+                ):
+                    st.session_state["selected_keyword_phrase"] = None
+                    st.rerun()
+
+            try:
+                related_sentences = get_sentences_by_keyword_phrase(
+                    selected_phrase
+                )
+
+                if not related_sentences:
+                    st.info("No matching sentences found.")
+
+                else:
+                    st.caption(
+                        f"{len(related_sentences)} related sentence(s)"
+                    )
+
+                    for row in related_sentences:
+                        sentence_id, sentence_text, source_text, keywords_text = row
+
+                        with st.container(border=True):
+                            st.write(sentence_text)
+
+                            if source_text:
+                                st.caption(f"Source: {source_text}")
+
+                            review_col, _ = st.columns([1, 5])
+
+                            with review_col:
+                                if st.button(
+                                    "Review →",
+                                    key=f"quick_phrase_review_{sentence_id}",
+                                    type="primary"
+                                ):
+                                    go_to_page(
+                                        "review",
+                                        int(sentence_id)
+                                    )
+
+            except Exception as e:
+                st.warning(
+                    f"Could not load related sentences: {e}"
+                )
+
+    # ===== Quick Review ends here. Keep everything below unchanged. =====
+
+    st.divider()
 
     search_text = st.text_input(
         "Search",
@@ -897,78 +1265,119 @@ elif current_page == "browse":
             all_domains
         )
 
-    # --------------------------------------------------------
-    # Fetch matching sentences
-    # --------------------------------------------------------
 
+
+    # Aggregate each tag type separately to reduce intermediate rows.
     query = """
-        SELECT DISTINCT
+        WITH function_tags AS (
+            SELECT
+                sf.sentence_id,
+                ARRAY_AGG(f.name ORDER BY f.name) AS functions
+            FROM sentence_functions sf
+            JOIN functions f ON f.id = sf.function_id
+            GROUP BY sf.sentence_id
+        ),
+        section_tags AS (
+            SELECT
+                ss.sentence_id,
+                ARRAY_AGG(sec.name ORDER BY sec.name) AS sections
+            FROM sentence_sections ss
+            JOIN sections sec ON sec.id = ss.section_id
+            GROUP BY ss.sentence_id
+        ),
+        domain_tags AS (
+            SELECT
+                sd.sentence_id,
+                ARRAY_AGG(d.name ORDER BY d.name) AS domains
+            FROM sentence_domains sd
+            JOIN domains d ON d.id = sd.domain_id
+            GROUP BY sd.sentence_id
+        )
+        SELECT
             s.id,
             s.sentence,
             s.source,
             s.keywords,
             s.remember_count,
             s.use_count,
-            s.last_reviewed
+            s.last_reviewed,
+            COALESCE(ft.functions, ARRAY[]::text[]) AS functions,
+            COALESCE(st.sections, ARRAY[]::text[]) AS sections,
+            COALESCE(dt.domains, ARRAY[]::text[]) AS domains
         FROM sentences s
+        LEFT JOIN function_tags ft ON ft.sentence_id = s.id
+        LEFT JOIN section_tags st ON st.sentence_id = s.id
+        LEFT JOIN domain_tags dt ON dt.sentence_id = s.id
     """
+
 
     conditions = []
     parameters = []
 
     if filter_function:
-        query += """
-            JOIN sentence_functions sf
-                ON s.id = sf.sentence_id
-            JOIN functions f
-                ON sf.function_id = f.id
-        """
         placeholders = ", ".join(
             ["%s"] * len(filter_function)
         )
         conditions.append(
-            f"f.name IN ({placeholders})"
+            f"""
+            EXISTS (
+                SELECT 1
+                FROM sentence_functions sf2
+                JOIN functions f2
+                    ON sf2.function_id = f2.id
+                WHERE sf2.sentence_id = s.id
+                AND f2.name IN ({placeholders})
+            )
+            """
         )
         parameters.extend(filter_function)
 
     if filter_section:
-        query += """
-            JOIN sentence_sections ss
-                ON s.id = ss.sentence_id
-            JOIN sections sec
-                ON ss.section_id = sec.id
-        """
         placeholders = ", ".join(
             ["%s"] * len(filter_section)
         )
         conditions.append(
-            f"sec.name IN ({placeholders})"
+            f"""
+            EXISTS (
+                SELECT 1
+                FROM sentence_sections ss2
+                JOIN sections sec2
+                    ON ss2.section_id = sec2.id
+                WHERE ss2.sentence_id = s.id
+                AND sec2.name IN ({placeholders})
+            )
+            """
         )
         parameters.extend(filter_section)
 
     if filter_domain:
-        query += """
-            JOIN sentence_domains sd
-                ON s.id = sd.sentence_id
-            JOIN domains d
-                ON sd.domain_id = d.id
-        """
         placeholders = ", ".join(
             ["%s"] * len(filter_domain)
         )
         conditions.append(
-            f"d.name IN ({placeholders})"
+            f"""
+            EXISTS (
+                SELECT 1
+                FROM sentence_domains sd2
+                JOIN domains d2
+                    ON sd2.domain_id = d2.id
+                WHERE sd2.sentence_id = s.id
+                AND d2.name IN ({placeholders})
+            )
+            """
         )
         parameters.extend(filter_domain)
 
     if search_text.strip():
-        conditions.append("""
+        conditions.append(
+            """
             (
                 s.sentence ILIKE %s
                 OR s.keywords ILIKE %s
                 OR s.source ILIKE %s
             )
-        """)
+            """
+        )
         pattern = f"%{search_text.strip()}%"
         parameters.extend([pattern, pattern, pattern])
 
@@ -976,6 +1385,10 @@ elif current_page == "browse":
         query += " WHERE " + " AND ".join(conditions)
 
     query += " ORDER BY s.id DESC"
+
+
+    # Measure Browse database query
+    browse_query_start = time.perf_counter()
 
     conn = get_connection()
     try:
@@ -985,295 +1398,214 @@ elif current_page == "browse":
     finally:
         conn.close()
 
-    st.write(f"**{len(rows)} sentence(s) found.**")
+    browse_query_time = time.perf_counter() - browse_query_start
 
-    if not rows:
-        st.info("No sentences found.")
+    print(
+        f"[PERF] Browse query: {browse_query_time:.2f}s | "
+        f"Rows: {len(rows)}"
+    )
 
-    else:
-        # ----------------------------------------------------
-        # Fetch all tags in 3 queries, not 3 queries per sentence
-        # ----------------------------------------------------
 
-        sentence_ids = [row[0] for row in rows]
+    # Tags are already included in each query result.
+    # Keep ID and Source internally, but hide them in the UI.
+    table_data = []
 
-        tags_by_id = {
-            sentence_id: {
-                "functions": [],
-                "sections": [],
-                "domains": [],
-            }
-            for sentence_id in sentence_ids
-        }
+    for row in rows:
+        table_data.append({
+            "Select": False,
+            "ID": row[0],
+            "Sentence": row[1],
+            "Function": row[7] or [],
+            "Section": row[8] or [],
+            "Domain": row[9] or [],
+            "Keywords / Pattern": row[3] or "",
+            "Remember": row[4] or 0,
+            "Use": row[5] or 0,
+            "Last Reviewed": row[6] or "",
+            "Source": row[2] or "",
+        })
 
-        conn = get_connection()
-        try:
-            with conn.cursor() as cursor:
+    browse_df = pd.DataFrame(table_data)
 
-                cursor.execute(
-                    """
-                    SELECT sf.sentence_id, f.name
-                    FROM sentence_functions sf
-                    JOIN functions f
-                        ON sf.function_id = f.id
-                    WHERE sf.sentence_id = ANY(%s)
-                    ORDER BY sf.sentence_id, f.id
-                    """,
-                    (sentence_ids,)
-                )
-                for sentence_id, name in cursor.fetchall():
-                    tags_by_id[sentence_id]["functions"].append(name)
 
-                cursor.execute(
-                    """
-                    SELECT ss.sentence_id, sec.name
-                    FROM sentence_sections ss
-                    JOIN sections sec
-                        ON ss.section_id = sec.id
-                    WHERE ss.sentence_id = ANY(%s)
-                    ORDER BY ss.sentence_id, sec.id
-                    """,
-                    (sentence_ids,)
-                )
-                for sentence_id, name in cursor.fetchall():
-                    tags_by_id[sentence_id]["sections"].append(name)
+    edited_df = st.data_editor(
+        browse_df,
+        width="stretch",
+        hide_index=True,
+        num_rows="fixed",
+        column_config={
+            "Select": st.column_config.CheckboxColumn(
+                "✓",
+                help="Select sentences",
+                width="small"
+            ),
+            "ID": None,
+            "Sentence": st.column_config.TextColumn(
+                "Sentence",
+                width="large"
+            ),
+            "Function": st.column_config.MultiselectColumn(
+                "Function",
+                options=all_functions,
+                width="medium"
+            ),
+            "Section": st.column_config.MultiselectColumn(
+                "Section",
+                options=all_sections,
+                width="medium"
+            ),
+            "Domain": st.column_config.MultiselectColumn(
+                "Domain",
+                options=all_domains,
+                width="medium"
+            ),
+            "Keywords / Pattern": st.column_config.TextColumn(
+                "Keywords / Pattern",
+                width="medium"
+            ),
+            "Remember": st.column_config.NumberColumn(
+                "Remember",
+                min_value=0,
+                step=1,
+                width="small"
+            ),
+            "Use": st.column_config.NumberColumn(
+                "Use",
+                min_value=0,
+                step=1,
+                width="small"
+            ),
+            "Last Reviewed": st.column_config.TextColumn(
+                "Last Reviewed",
+                disabled=True,
+                width="small"
+            ),
+            "Source": None,
+        },
+        disabled=["ID", "Last Reviewed", "Source"],
+        key="browse_sentence_table"
+    )
 
-                cursor.execute(
-                    """
-                    SELECT sd.sentence_id, d.name
-                    FROM sentence_domains sd
-                    JOIN domains d
-                        ON sd.domain_id = d.id
-                    WHERE sd.sentence_id = ANY(%s)
-                    ORDER BY sd.sentence_id, d.name
-                    """,
-                    (sentence_ids,)
-                )
-                for sentence_id, name in cursor.fetchall():
-                    tags_by_id[sentence_id]["domains"].append(name)
-        finally:
-            conn.close()
+    # Save only rows whose content actually changed
+    original_content = (
+        browse_df
+        .drop(columns=["Select"])
+        .reset_index(drop=True)
+    )
 
-        # ----------------------------------------------------
-        # Build the editable table
-        # ----------------------------------------------------
+    edited_content = (
+        edited_df
+        .drop(columns=["Select"])
+        .reset_index(drop=True)
+    )
 
-        table_data = []
+    changed_indices = [
+        i
+        for i in range(len(edited_content))
+        if not edited_content.iloc[i].equals(
+            original_content.iloc[i]
+        )
+    ]
 
-        for row in rows:
-            sentence_id = row[0]
-            tags = tags_by_id[sentence_id]
+    if changed_indices:
+        for i in changed_indices:
+            edited_row = edited_df.iloc[i]
 
-            table_data.append({
-                "Select": False,
-                "ID": sentence_id,
-                "Sentence": row[1],
-                "Function": tags["functions"],
-                "Section": tags["sections"],
-                "Domain": tags["domains"],
-                "Keywords / Pattern": row[3] or "",
-                "Remember": row[4] or 0,
-                "Use": row[5] or 0,
-                "Last Reviewed": row[6] or "",
-                "Source": row[2] or "",
-            })
+            functions = edited_row["Function"]
+            sections = edited_row["Section"]
+            domains = edited_row["Domain"]
 
-        browse_df = pd.DataFrame(table_data)
+            if not isinstance(functions, list):
+                functions = []
+            if not isinstance(sections, list):
+                sections = []
+            if not isinstance(domains, list):
+                domains = []
 
-        edited_df = st.data_editor(
-            browse_df,
-            use_container_width=True,
-            hide_index=True,
-            num_rows="fixed",
-            column_config={
-                "Select": st.column_config.CheckboxColumn(
-                    "✓",
-                    help="Select sentences",
-                    width="small"
-                ),
-                "ID": st.column_config.NumberColumn(
-                    "ID",
-                    disabled=True,
-                    width="small"
-                ),
-                "Sentence": st.column_config.TextColumn(
-                    "Sentence",
-                    width="large"
-                ),
-                "Function": st.column_config.MultiselectColumn(
-                    "Function",
-                    options=all_functions,
-                    width="medium"
-                ),
-                "Section": st.column_config.MultiselectColumn(
-                    "Section",
-                    options=all_sections,
-                    width="medium"
-                ),
-                "Domain": st.column_config.MultiselectColumn(
-                    "Domain",
-                    options=all_domains,
-                    width="medium"
-                ),
-                "Keywords / Pattern": st.column_config.TextColumn(
-                    "Keywords / Pattern",
-                    width="medium"
-                ),
-                "Remember": st.column_config.NumberColumn(
-                    "Remember",
-                    min_value=0,
-                    step=1,
-                    width="small"
-                ),
-                "Use": st.column_config.NumberColumn(
-                    "Use",
-                    min_value=0,
-                    step=1,
-                    width="small"
-                ),
-                "Last Reviewed": st.column_config.TextColumn(
-                    "Last Reviewed",
-                    disabled=True,
-                    width="small"
-                ),
-                "Source": st.column_config.TextColumn(
-                    "Source",
-                    width="medium"
-                ),
-            },
-            disabled=["ID", "Last Reviewed"],
-            key="browse_sentence_table"
+            save_sentence_changes(
+                int(edited_row["ID"]),
+                str(edited_row["Sentence"]).strip(),
+                str(edited_row["Source"] or "").strip(),
+                str(edited_row["Keywords / Pattern"] or "").strip(),
+                max(0, int(edited_row["Remember"] or 0)),
+                max(0, int(edited_row["Use"] or 0)),
+                functions,
+                sections,
+                domains
+            )
+
+        st.success(
+            f"Saved changes to {len(changed_indices)} sentence(s)."
+        )
+        st.rerun()
+
+    # Select sentences for review or deletion
+    selected_ids = edited_df.loc[
+        edited_df["Select"] == True,
+        "ID"
+    ].tolist()
+
+    if selected_ids:
+        st.divider()
+        st.write(
+            f"**{len(selected_ids)} sentence(s) selected.**"
         )
 
-        # ----------------------------------------------------
-        # Save only rows whose content actually changed
-        # ----------------------------------------------------
+        action_col1, action_col2 = st.columns(2)
 
-        original_content = (
-            browse_df
-            .drop(columns=["Select"])
-            .reset_index(drop=True)
+        with action_col1:
+            if st.button(
+                "Review",
+                type="primary",
+                key="review_selected_browse"
+            ):
+                if len(selected_ids) == 1:
+                    go_to_page("review", int(selected_ids[0]))
+                else:
+                    st.warning(
+                        "Please select only one sentence to review at a time."
+                    )
+
+        with action_col2:
+            if st.button(
+                "Delete",
+                key="delete_selected_browse"
+            ):
+                st.session_state["confirm_delete"] = True
+                st.session_state["delete_ids"] = [
+                    int(x) for x in selected_ids
+                ]
+                st.rerun()
+
+    # Delete confirmation
+    if st.session_state.get("confirm_delete", False):
+        delete_ids = st.session_state.get("delete_ids", [])
+
+        st.warning(
+            f"Are you sure you want to delete {len(delete_ids)} sentence(s)?"
         )
 
-        edited_content = (
-            edited_df
-            .drop(columns=["Select"])
-            .reset_index(drop=True)
-        )
+        confirm_col1, confirm_col2 = st.columns(2)
 
-        changed_indices = [
-            i
-            for i in range(len(edited_content))
-            if not edited_content.iloc[i].equals(
-                original_content.iloc[i]
-            )
-        ]
+        with confirm_col1:
+            if st.button(
+                "Yes, Delete",
+                key="yes_delete_browse"
+            ):
+                delete_sentences(delete_ids)
+                st.session_state["confirm_delete"] = False
+                st.session_state["delete_ids"] = []
+                st.success("Sentences deleted.")
+                st.rerun()
 
-        if changed_indices:
-            for i in changed_indices:
-                edited_row = edited_df.iloc[i]
-
-                functions = edited_row["Function"]
-                sections = edited_row["Section"]
-                domains = edited_row["Domain"]
-
-                if not isinstance(functions, list):
-                    functions = []
-                if not isinstance(sections, list):
-                    sections = []
-                if not isinstance(domains, list):
-                    domains = []
-
-                save_sentence_changes(
-                    int(edited_row["ID"]),
-                    str(edited_row["Sentence"]).strip(),
-                    str(edited_row["Source"]).strip(),
-                    str(edited_row["Keywords / Pattern"]).strip(),
-                    max(0, int(edited_row["Remember"] or 0)),
-                    max(0, int(edited_row["Use"] or 0)),
-                    functions,
-                    sections,
-                    domains
-                )
-
-            st.success(
-                f"Saved changes to {len(changed_indices)} sentence(s)."
-            )
-            st.rerun()
-
-        # ----------------------------------------------------
-        # Select sentences for review or deletion
-        # ----------------------------------------------------
-
-        selected_ids = edited_df.loc[
-            edited_df["Select"] == True,
-            "ID"
-        ].tolist()
-
-        if selected_ids:
-            st.divider()
-            st.write(
-                f"**{len(selected_ids)} sentence(s) selected.**"
-            )
-
-            action_col1, action_col2 = st.columns(2)
-
-            with action_col1:
-                if st.button(
-                    "Review",
-                    type="primary",
-                    key="review_selected_browse"
-                ):
-                    if len(selected_ids) == 1:
-                        go_to_page("review", int(selected_ids[0]))
-                    else:
-                        st.warning(
-                            "Please select only one sentence to review at a time."
-                        )
-
-            with action_col2:
-                if st.button(
-                    "Delete",
-                    key="delete_selected_browse"
-                ):
-                    st.session_state["confirm_delete"] = True
-                    st.session_state["delete_ids"] = [
-                        int(x) for x in selected_ids
-                    ]
-                    st.rerun()
-
-        # ----------------------------------------------------
-        # Delete confirmation
-        # ----------------------------------------------------
-
-        if st.session_state.get("confirm_delete", False):
-            delete_ids = st.session_state.get("delete_ids", [])
-
-            st.warning(
-                f"Are you sure you want to delete {len(delete_ids)} sentence(s)?"
-            )
-
-            confirm_col1, confirm_col2 = st.columns(2)
-
-            with confirm_col1:
-                if st.button(
-                    "Yes, Delete",
-                    key="yes_delete_browse"
-                ):
-                    delete_sentences(delete_ids)
-                    st.session_state["confirm_delete"] = False
-                    st.session_state["delete_ids"] = []
-                    st.success("Sentences deleted.")
-                    st.rerun()
-
-            with confirm_col2:
-                if st.button(
-                    "Cancel",
-                    key="cancel_delete_browse"
-                ):
-                    st.session_state["confirm_delete"] = False
-                    st.session_state["delete_ids"] = []
-                    st.rerun()
+        with confirm_col2:
+            if st.button(
+                "Cancel",
+                key="cancel_delete_browse"
+            ):
+                st.session_state["confirm_delete"] = False
+                st.session_state["delete_ids"] = []
+                st.rerun()
 
 
 # ============================================================
@@ -1281,8 +1613,6 @@ elif current_page == "browse":
 # ============================================================
 
 elif current_page == "review":
-
-    st.header("Review")
 
     selected_id = (
         st.session_state.get(
@@ -1472,7 +1802,7 @@ elif current_page == "review":
             st.divider()
 
             st.markdown(
-                "### 📊 Learning Progress"
+                "### Learning Progress"
             )
 
             progress_col1, progress_col2, progress_col3 = (
@@ -1515,6 +1845,14 @@ elif current_page == "review":
                 )
 
 
+            mastery_level = st.selectbox(
+                "Current mastery",
+                ["Not started", "Learning", "Getting familiar", "Confident", "Mastered"],
+                index=1,
+                key=f"mastery_{sentence_id}"
+            )
+
+
             # ------------------------------------------------
             # PRACTICE
             # ------------------------------------------------
@@ -1522,7 +1860,7 @@ elif current_page == "review":
             st.divider()
 
             st.markdown(
-                "### ✍️ Your Practice"
+                "### Your Practice"
             )
 
             st.caption(
@@ -1547,7 +1885,7 @@ elif current_page == "review":
             # ------------------------------------------------
 
             if st.button(
-                "💾 Save Progress",
+                "Save Progress",
                 type="primary",
                 key=f"save_review_{sentence_id}"
             ):
@@ -1573,6 +1911,32 @@ elif current_page == "review":
                     )
                 )
 
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS learning_records (
+                        id BIGSERIAL PRIMARY KEY,
+                        sentence_id BIGINT NOT NULL,
+                        reviewed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        remember_count INTEGER NOT NULL DEFAULT 0,
+                        use_count INTEGER NOT NULL DEFAULT 0,
+                        mastery_level TEXT NOT NULL DEFAULT 'Learning',
+                        practice_text TEXT
+                    )
+                """)
+                cursor.execute(
+                    """
+                    INSERT INTO learning_records
+                        (sentence_id, remember_count, use_count, mastery_level, practice_text)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (
+                        sentence_id,
+                        int(new_remember),
+                        int(new_use),
+                        mastery_level,
+                        practice_text.strip() if practice_text else None
+                    )
+                )
+
                 conn.commit()
                 conn.close()
 
@@ -1589,13 +1953,6 @@ elif current_page == "review":
 
 elif current_page == "recommend":
 
-    st.header("🎯 Recommended Sentences")
-
-    st.caption(
-        "Recommendations prioritise sentences that "
-        "you have remembered and used less often."
-    )
-
 
     # --------------------------------------------------------
     # REFRESH
@@ -1611,44 +1968,26 @@ elif current_page == "recommend":
             "🔄 Refresh",
             key="refresh_recommendations"
         ):
-
+            get_recommendation_rows.clear()
+            
             st.session_state[
                 "recommend_seed"
             ] += 1
 
             st.rerun()
 
-
+   
     # --------------------------------------------------------
     # GET SENTENCES
     # --------------------------------------------------------
 
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        SELECT
-            id,
-            sentence,
-            source,
-            keywords,
-            remember_count,
-            use_count
-        FROM sentences
-        """
-    )
-
-    all_rows = cursor.fetchall()
-
-    conn.close()
-
+    all_rows = get_recommendation_rows()
 
     if not all_rows:
-
         st.info(
             "Your sentence bank is empty."
         )
+
 
 
     else:
@@ -1771,7 +2110,7 @@ elif current_page == "recommend":
                 # --------------------------------------------
 
                 if st.button(
-                    "🔄 Review →",
+                    "Review →",
                     key=f"recommend_review_{sentence_id}"
                 ):
 
@@ -1783,6 +2122,13 @@ elif current_page == "recommend":
                         sentence_id
                     )
 
+
+
+
+print(
+    f"[PERF] Page: {st.session_state.get('current_page', 'unknown')} | "
+    f"Total script time: {time.perf_counter() - SCRIPT_START:.2f}s"
+)
 
 # ============================================================
 # END

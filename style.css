@@ -1,0 +1,350 @@
+
+/* ==================================================
+   Academic English System
+   Cherry Blossom Pixel Garden
+   ================================================== */
+
+/* 1. Colour palette */
+:root {
+    --sakura-pink: #F4BFCB;
+    --soft-pink: #FCE8ED;
+    --dusty-pink: #D9A7B3;
+    --cream: #FFF7ED;
+    --cream-dark: #F5EBDD;
+    --rose-brown: #A45D73;
+    --rose-dark: #713F50;
+    --wood-brown: #8A6959;
+    --sage-green: #A8B59A;
+    --sage-light: #E7EBDD;
+    --text-main: #493A3D;
+    --text-muted: #8A7478;
+}
+
+/* 2. Main app background */
+.stApp {
+    background-color: var(--cream);
+    color: var(--text-main);
+}
+
+/* Main content spacing */
+.block-container {
+    padding-top: 2rem;
+    padding-bottom: 3rem;
+    max-width: 1400px;
+}
+
+/* 3. Main headings */
+h1, h2, h3 {
+    color: var(--rose-dark) !important;
+    letter-spacing: 0.02em;
+}
+
+h1 {
+    font-weight: 750 !important;
+}
+
+/* 4. Pixel-inspired dividers */
+hr {
+    border: none !important;
+    height: 4px !important;
+    background:
+        repeating-linear-gradient(
+            90deg,
+            var(--dusty-pink) 0px,
+            var(--dusty-pink) 8px,
+            var(--cream) 8px,
+            var(--cream) 12px
+        ) !important;
+    opacity: 0.9;
+    margin: 1.4rem 0 !important;
+}
+
+/* 5. Buttons */
+.stButton > button {
+    background-color: var(--sakura-pink);
+    color: var(--rose-dark);
+    border: 2px solid var(--rose-brown);
+    border-radius: 4px;
+    font-weight: 650;
+    box-shadow: 3px 3px 0 var(--rose-brown);
+    transition: background-color 0.15s ease,
+                transform 0.15s ease,
+                box-shadow 0.15s ease;
+}
+
+.stButton > button:hover {
+    background-color: var(--soft-pink);
+    color: var(--rose-dark);
+    border-color: var(--rose-dark);
+    box-shadow: 1px 1px 0 var(--rose-brown);
+    transform: translate(2px, 2px);
+}
+
+.stButton > button:focus:not(:active) {
+    border-color: var(--rose-dark);
+    color: var(--rose-dark);
+}
+
+/* 6. Text inputs */
+.stTextInput input,
+.stTextArea textarea,
+.stNumberInput input {
+    background-color: #FFFCF7;
+    color: var(--text-main);
+    border: 1px solid var(--dusty-pink);
+    border-radius: 4px;
+}
+
+.stTextInput input:focus,
+.stTextArea textarea:focus,
+.stNumberInput input:focus {
+    border-color: var(--rose-brown);
+    box-shadow: 0 0 0 1px var(--rose-brown);
+}
+
+/* 7. Select boxes and multiselects */
+.stSelectbox [data-baseweb="select"] > div,
+.stMultiSelect [data-baseweb="select"] > div {
+    background-color: #FFFCF7;
+    border-color: var(--dusty-pink);
+    border-radius: 4px;
+}
+
+.stMultiSelect span[data-baseweb="tag"] {
+    background-color: var(--soft-pink);
+    color: var(--rose-dark);
+    border: 1px solid var(--dusty-pink);
+}
+
+/* 8. Expanders: Learning Progress and Quick Review */
+.streamlit-expanderHeader {
+    background-color: var(--soft-pink);
+    color: var(--rose-dark);
+    border: 1px solid var(--dusty-pink);
+    border-radius: 4px;
+    font-weight: 650;
+}
+
+.streamlit-expanderContent {
+    background-color: rgba(255, 252, 247, 0.85);
+    border: 1px solid var(--dusty-pink);
+    border-top: none;
+}
+
+/* 9. Metric cards */
+[data-testid="stMetric"] {
+    background-color: #FFFCF7;
+    border: 1px solid var(--dusty-pink);
+    border-bottom: 3px solid var(--rose-brown);
+    padding: 14px;
+    border-radius: 4px;
+}
+
+[data-testid="stMetricLabel"] {
+    color: var(--text-muted);
+}
+
+[data-testid="stMetricValue"] {
+    color: var(--rose-dark);
+}
+
+/* 10. Data editor */
+[data-testid="stDataFrame"],
+[data-testid="stDataEditor"] {
+    border: 1px solid var(--dusty-pink);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+/* 11. Sidebar */
+[data-testid="stSidebar"] {
+    background-color: #F9E5E9;
+    border-right: 2px solid var(--dusty-pink);
+}
+
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3 {
+    color: var(--rose-dark) !important;
+}
+
+/* 12. Captions and secondary text */
+[data-testid="stCaptionContainer"] {
+    color: var(--text-muted);
+}
+
+/* 13. Subtle pixel-checker decoration utility */
+.pixel-checker {
+    background-color: var(--soft-pink);
+    background-image:
+        linear-gradient(45deg, var(--dusty-pink) 25%, transparent 25%),
+        linear-gradient(-45deg, var(--dusty-pink) 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, var(--dusty-pink) 75%),
+        linear-gradient(-45deg, transparent 75%, var(--dusty-pink) 75%);
+    background-size: 8px 8px;
+}
+
+/* 14. Keep the interface readable on smaller screens */
+@media (max-width: 768px) {
+    .block-container {
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+
+    [data-testid="stMetric"] {
+        padding: 8px;
+    }
+}
+
+
+
+/* ==================================================
+   PIXEL ART UPGRADE
+   Cherry Blossom Retro Game UI
+   ================================================== */
+
+/* 1. Pixel-style panels with stepped shadows */
+[data-testid="stMetric"] {
+    border: 2px solid var(--rose-brown) !important;
+    border-radius: 0 !important;
+    box-shadow: 4px 4px 0 var(--dusty-pink);
+    background-color: #FFFCF7 !important;
+    position: relative;
+}
+
+/* 2. Retro game buttons */
+.stButton > button {
+    border: 2px solid var(--rose-dark) !important;
+    border-radius: 0 !important;
+    box-shadow:
+        3px 3px 0 var(--rose-dark),
+        6px 6px 0 rgba(164, 93, 115, 0.14);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    transition: none !important;
+}
+
+.stButton > button:hover {
+    box-shadow: 1px 1px 0 var(--rose-dark) !important;
+    transform: translate(2px, 2px);
+}
+
+/* 3. Pixel-inspired section headers */
+.streamlit-expanderHeader {
+    border: 2px solid var(--rose-brown) !important;
+    border-radius: 0 !important;
+    box-shadow: 3px 3px 0 var(--dusty-pink);
+    background-color: var(--soft-pink) !important;
+    font-weight: 700 !important;
+}
+
+/* 4. Give the sidebar a retro game-menu feel */
+[data-testid="stSidebar"] {
+    background-color: #F9E5E9 !important;
+    border-right: 3px solid var(--rose-brown);
+}
+
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+    gap: 0.75rem;
+}
+
+/* 5. Pixel-style input borders */
+.stTextInput input,
+.stTextArea textarea,
+.stNumberInput input {
+    border: 2px solid var(--dusty-pink) !important;
+    border-radius: 0 !important;
+    box-shadow: 2px 2px 0 rgba(164, 93, 115, 0.16);
+}
+
+/* 6. Retro-style select controls */
+.stSelectbox [data-baseweb="select"] > div,
+.stMultiSelect [data-baseweb="select"] > div {
+    border: 2px solid var(--dusty-pink) !important;
+    border-radius: 0 !important;
+}
+
+/* 7. Pixel checkerboard decoration for the page top */
+[data-testid="stAppViewBlockContainer"] > div:first-child {
+    background-image:
+        linear-gradient(45deg, rgba(217, 167, 179, 0.08) 25%, transparent 25%),
+        linear-gradient(-45deg, rgba(217, 167, 179, 0.08) 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, rgba(217, 167, 179, 0.08) 75%),
+        linear-gradient(-45deg, transparent 75%, rgba(217, 167, 179, 0.08) 75%);
+    background-size: 16px 16px;
+    background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+
+/* 8. More visible pixel divider */
+hr {
+    height: 4px !important;
+    background: repeating-linear-gradient(
+        90deg,
+        var(--rose-brown) 0 8px,
+        var(--dusty-pink) 8px 16px,
+        var(--cream) 16px 20px
+    ) !important;
+    opacity: 0.85;
+}
+
+/* 9. Sharper data table frame */
+[data-testid="stDataFrame"],
+[data-testid="stDataEditor"] {
+    border: 2px solid var(--rose-brown) !important;
+    border-radius: 0 !important;
+    box-shadow: 4px 4px 0 rgba(217, 167, 179, 0.6);
+}
+
+/* 10. Slightly retro typography for headings */
+h1, h2, h3 {
+    color: var(--rose-dark) !important;
+    text-shadow: 1px 1px 0 rgba(217, 167, 179, 0.35);
+}
+
+
+/* Daily review pixel progress */
+.daily-progress-card {
+    margin-top: 18px;
+    padding: 16px 18px;
+    background: #fff8f3;
+    border: 2px solid #d9a0a8;
+    box-shadow: 3px 3px 0 #efd4d5;
+    font-family: inherit;
+}
+
+.daily-progress-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    color: #8d4057;
+    font-weight: 700;
+    margin-bottom: 12px;
+}
+
+.daily-progress-track {
+    width: 100%;
+    height: 18px;
+    padding: 3px;
+    box-sizing: border-box;
+    background: #f2e3e3;
+    border: 2px solid #9c596b;
+}
+
+.daily-progress-fill {
+    height: 100%;
+    background: repeating-linear-gradient(
+        90deg,
+        #c96c83 0px,
+        #c96c83 8px,
+        #d98799 8px,
+        #d98799 12px
+    );
+    transition: width 0.35s ease;
+}
+
+.daily-progress-caption {
+    margin-top: 9px;
+    color: #987d83;
+    font-size: 13px;
+}
